@@ -41,7 +41,7 @@ class App(tk.Tk):
             ttk.Label(f,text=label).pack(anchor="w",pady=(6,2)); ttk.Entry(f,textvariable=var).pack(fill="x")
         row=ttk.Frame(f); row.pack(fill="x",pady=10); ttk.Button(row,text="DB 단어에서 조합",command=self.combine).pack(side="left",padx=3); ttk.Button(row,text="가사·Suno 프롬프트·제목 만들기",command=self.generate).pack(side="left",padx=3)
         self.result=tk.Text(f,height=16,bg="#1f2937",fg="white",insertbackground="white",wrap="word",font=("Malgun Gothic",10),borderwidth=0); self.result.pack(fill="both",expand=True,pady=8)
-        row=ttk.Frame(f); row.pack(fill="x"); ttk.Button(row,text="Suno MCP 연결",command=self.connect_suno).pack(side="left",padx=3); ttk.Button(row,text="Suno에서 노래 생성",command=self.create_suno_song).pack(side="left",padx=3); ttk.Button(row,text="Suno 열기",command=lambda:webbrowser.open("https://suno.com/create")).pack(side="left",padx=3); ttk.Button(row,text="생성한 오디오 선택",command=self.pick_audio).pack(side="left",padx=3); ttk.Button(row,text="YouTube 업로드",command=self.upload).pack(side="left",padx=3)
+        row=ttk.Frame(f); row.pack(fill="x"); ttk.Button(row,text="Suno MCP 연결",command=self.connect_suno).pack(side="left",padx=3); ttk.Button(row,text="Suno 생성 → YouTube 자동 업로드",command=self.create_suno_song).pack(side="left",padx=3); ttk.Button(row,text="Suno 열기",command=lambda:webbrowser.open("https://suno.com/create")).pack(side="left",padx=3); ttk.Button(row,text="오디오/영상 선택",command=self.pick_audio).pack(side="left",padx=3); ttk.Button(row,text="YouTube 업로드",command=self.upload).pack(side="left",padx=3)
         ttk.Label(f,textvariable=self.suno_status,wraplength=820).pack(anchor="w",pady=(6,0))
         privacy=ttk.Frame(f); privacy.pack(fill="x",pady=(4,0)); ttk.Label(privacy,text="YouTube 공개 범위:").pack(side="left",padx=(0,6)); ttk.Combobox(privacy,textvariable=self.privacy,values=["private","unlisted","public"],state="readonly",width=12).pack(side="left")
         ttk.Label(f,textvariable=self.audio).pack(anchor="w",pady=3)
@@ -127,11 +127,16 @@ class App(tk.Tk):
         d=getattr(self,"current_data",None)
         if not d:
             messagebox.showinfo("먼저 곡을 준비하세요","먼저 가사·Suno 프롬프트·제목 만들기를 실행하세요.");return
-        if not messagebox.askyesno("Suno 노래 생성","Suno 계정의 생성 크레딧을 사용해 노래를 생성합니다. 계속할까요?"):return
-        self._suno_status("Suno 도구를 확인하고 곡 생성 요청을 준비하고 있습니다…")
+        if not self._youtube_setup_available():
+            messagebox.showerror("YouTube 설정 필요","자동 업로드를 시작하기 전에 client_secrets.json을 EXE와 같은 폴더에 준비하거나 YouTube에 로그인해 주세요.");return
+        visibility=self.privacy.get()
+        if not messagebox.askyesno("생성 및 YouTube 업로드",f"Suno 생성/다운로드 크레딧을 사용할 수 있으며, 곡을 YouTube에 {visibility}으로 업로드합니다. 계속할까요?"):return
+        self._suno_status("YouTube 계정을 확인한 다음 Suno 곡 생성을 시작합니다…")
         def run():
             try:
                 from suno_mcp import connect_and_list_tools, invoke_tool, result_to_text
+                from media_pipeline import make_youtube_video, save_audio_from_result
+                yt=self._get_youtube_service()
                 token_path=DATA/"suno_mcp_oauth.json"
                 tools=getattr(self,"suno_tools",None) or connect_and_list_tools(token_path)
                 candidates=[t for t in tools if any(k in (t["name"]+" "+t["description"]).lower() for k in ("create","generate","song","music"))]
@@ -148,9 +153,53 @@ class App(tk.Tk):
                 if missing:raise ValueError("Suno 요청에 필수 인수가 없습니다: "+", ".join(missing))
                 self.after(0,lambda:self._suno_status(f"Suno에 '{tool_name}' 생성 요청을 보냈습니다. 결과를 기다리는 중…"))
                 result=invoke_tool(token_path,tool_name,args); text=result_to_text(result)
-                self.after(0,lambda:(self._suno_status("Suno 생성 요청 완료. Suno 라이브러리에서 오디오를 확인하세요."),self._show_suno_result(text)))
+                run_dir=DATA/"runs"/datetime.now().strftime("%Y%m%d_%H%M%S"); audio_path=save_audio_from_result(result,run_dir)
+                if not audio_path:
+                    result,audio_path,text=self._wait_and_download_audio(token_path,tools,result,text,d,run_dir)
+                if not audio_path:raise RuntimeError("Suno에서 곡은 생성했지만 자동 업로드용 오디오 파일을 가져오지 못했습니다. 다운로드 권한/월간 한도 또는 Suno MCP 도구 응답을 확인하세요. Suno 라이브러리에는 곡이 저장되어 있습니다.\n\n응답:\n"+text[:1800])
+                self.after(0,lambda:self._suno_status("오디오 파일을 YouTube 영상으로 만들고 있습니다…"))
+                if audio_path.suffix.lower() in (".mp4",".mov",".webm"):
+                    video_path=audio_path
+                else:
+                    video_path=make_youtube_video(audio_path,d.get("title",self.theme.get()),self.genre.get(),run_dir/"youtube_upload.mp4")
+                self.after(0,lambda:self._suno_status("제목·설명을 붙여 YouTube에 업로드하고 있습니다…"))
+                video_id=self._upload_to_youtube(yt,video_path,d,lambda message:self.after(0,lambda:self._suno_status(message)))
+                c=db(); c.execute("UPDATE projects SET video=? WHERE id=(SELECT MAX(id) FROM projects)",(str(video_path),)); c.commit(); c.close()
+                link=f"https://youtu.be/{video_id}"; done=f"자동 업로드 완료\n\n제목: {d.get('title','')}\n공개 범위: {visibility}\n파일: {video_path}\n\n{link}\n\nSuno 응답:\n{text[:1000]}"
+                self.after(0,lambda:(self._suno_status("Suno 생성부터 YouTube 업로드까지 완료했습니다."),self._show_suno_result(done),messagebox.showinfo("업로드 완료",link)))
             except Exception as e:self.after(0,lambda:self._suno_error(e))
         threading.Thread(target=run,daemon=True).start()
+    def _wait_and_download_audio(self,token_path,tools,result,text,data,run_dir):
+        from suno_mcp import invoke_tool,result_to_text
+        from media_pipeline import save_audio_from_result
+        import time
+        downloaded_tools=set(); current_result=result; current_text=text
+        for attempt in range(10):
+            candidates=[]
+            for tool in tools:
+                name=tool["name"].lower(); desc=tool["description"].lower(); combined=name+" "+desc
+                is_fetch=any(k in combined for k in ("download","audio","status","wait","poll","detail","result","fetch","song","music","clip"))
+                forbidden=any(k in name for k in ("generate","create","edit","delete","upload","search","like","share"))
+                is_download="download" in combined
+                if is_fetch and not forbidden and (not is_download or tool["name"] not in downloaded_tools):candidates.append(tool)
+            if not candidates:break
+            schemas=json.dumps(candidates,ensure_ascii=False,indent=2)
+            prompt=("Select one read-only Suno MCP status/result tool, or a download tool, to get the audio file for the song already created. "
+                "Do not create another song, search, edit, delete, or upload. Return {action:'call',tool_name,arguments} or {action:'none'}. "
+                f"Song title: {data.get('title','')}\nPrevious Suno response:\n{current_text[:7000]}\nTools:\n{schemas}")
+            choice=self.call_ai_json(prompt); name=choice.get("tool_name"); args=choice.get("arguments")
+            if choice.get("action")!="call" or name not in {t["name"] for t in candidates} or not isinstance(args,dict):break
+            tool=next(t for t in candidates if t["name"]==name); missing=[x for x in tool.get("inputSchema",{}).get("required",[]) if x not in args]
+            if missing:
+                if "download" in name.lower():downloaded_tools.add(name)
+                continue
+            if "download" in name.lower():downloaded_tools.add(name)
+            self.after(0,lambda n=name:self._suno_status(f"Suno '{n}' 도구로 생성 결과/오디오를 가져오는 중…"))
+            current_result=invoke_tool(token_path,name,args); current_text=result_to_text(current_result)
+            audio_path=save_audio_from_result(current_result,run_dir)
+            if audio_path:return current_result,audio_path,current_text
+            if any(word in current_text.lower() for word in ("pending","processing","generating","queued","in_progress","진행 중","생성 중")) and attempt<9:time.sleep(10)
+        return current_result,None,current_text
     def _suno_status(self,text):
         self.suno_status.set(text)
     def _show_suno_result(self,text):
@@ -174,28 +223,51 @@ class App(tk.Tk):
         if not p or not Path(p).exists():messagebox.showerror("파일 필요","Suno에서 만든 오디오 또는 영상 파일을 먼저 선택하세요.");return
         def run():
             try:
-                from googleapiclient.discovery import build
-                from googleapiclient.http import MediaFileUpload
-                from google_auth_oauthlib.flow import InstalledAppFlow
-                from google.oauth2.credentials import Credentials
-                from google.auth.transport.requests import Request
-                scope=["https://www.googleapis.com/auth/youtube.upload"]; token=DATA/"youtube_token.json"; creds=None
-                if token.exists():creds=Credentials.from_authorized_user_file(str(token),scope)
-                if not creds or not creds.valid:
-                    if creds and creds.expired and creds.refresh_token:creds.refresh(Request())
-                    else:
-                        secret=Path(sys.executable).parent/"client_secrets.json" if getattr(sys,"frozen",False) else Path(__file__).parent/"client_secrets.json"
-                        if not secret.exists():raise FileNotFoundError("client_secrets.json을 앱 폴더에 넣으세요.")
-                        creds=InstalledAppFlow.from_client_secrets_file(str(secret),scope).run_local_server(port=0)
-                    token.write_text(creds.to_json(),encoding="utf-8")
-                yt=build("youtube","v3",credentials=creds)
-                meta=getattr(self,"current_data",{}); title=meta.get("title",self.theme.get())[:100]; desc=meta.get("description","AI 음악 프로젝트 · SUNO STUDIO"); tags=meta.get("tags",[self.genre.get(),"AI music","Suno"])
-                req=yt.videos().insert(part="snippet,status",body={"snippet":{"title":title,"description":desc,"tags":tags,"categoryId":"10"},"status":{"privacyStatus":self.privacy.get()}},media_body=MediaFileUpload(p,resumable=True))
-                response=None
-                while response is None:status,response=req.next_chunk()
-                self.after(0,lambda:messagebox.showinfo("업로드 완료",f"https://youtu.be/{response['id']}"))
+                yt=self._get_youtube_service(); media_path=Path(p)
+                if media_path.suffix.lower() in (".mp3",".wav",".m4a",".aac",".flac",".ogg",".opus"):
+                    from media_pipeline import make_youtube_video
+                    media_path=make_youtube_video(media_path,getattr(self,"current_data",{}).get("title",self.theme.get()),self.genre.get(),DATA/"runs"/(media_path.stem+"_youtube.mp4"))
+                video_id=self._upload_to_youtube(yt,media_path,getattr(self,"current_data",{})); self.after(0,lambda:messagebox.showinfo("업로드 완료",f"https://youtu.be/{video_id}"))
             except Exception as e:self.after(0,lambda:messagebox.showerror("업로드 오류",str(e)))
         threading.Thread(target=run,daemon=True).start()
+    def _youtube_setup_available(self):
+        if (DATA/"youtube_token.json").exists():return True
+        secret=Path(sys.executable).parent/"client_secrets.json" if getattr(sys,"frozen",False) else Path(__file__).parent/"client_secrets.json"
+        return secret.exists()
+    def _get_youtube_service(self):
+        from googleapiclient.discovery import build
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        scope=["https://www.googleapis.com/auth/youtube.upload"]; token=DATA/"youtube_token.json"; creds=None
+        if token.exists():creds=Credentials.from_authorized_user_file(str(token),scope)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:creds.refresh(Request())
+            else:
+                secret=Path(sys.executable).parent/"client_secrets.json" if getattr(sys,"frozen",False) else Path(__file__).parent/"client_secrets.json"
+                if not secret.exists():raise FileNotFoundError("client_secrets.json을 EXE와 같은 폴더에 넣으세요.")
+                creds=InstalledAppFlow.from_client_secrets_file(str(secret),scope).run_local_server(port=0)
+            token.write_text(creds.to_json(),encoding="utf-8")
+        return build("youtube","v3",credentials=creds)
+    def _upload_to_youtube(self,yt,video_path,meta,progress=None):
+        from googleapiclient.http import MediaFileUpload
+        title=(meta.get("title") or self.theme.get())[:100]
+        desc=(meta.get("description") or "AI 음악 프로젝트 · SUNO STUDIO")[:5000]
+        raw_tags=meta.get("tags") or [self.genre.get(),"AI music","Suno"]
+        if isinstance(raw_tags,str):raw_tags=[x.strip() for x in raw_tags.split(",")]
+        tags=[]; total=0
+        for tag in raw_tags:
+            tag=str(tag).strip()[:100]
+            if tag and total+len(tag)<=480:tags.append(tag); total+=len(tag)
+        body={"snippet":{"title":title,"description":desc,"tags":tags,"categoryId":"10"},"status":{"privacyStatus":self.privacy.get()}}
+        import mimetypes
+        media_type=mimetypes.guess_type(str(video_path))[0] or "video/mp4"
+        request=yt.videos().insert(part="snippet,status",body=body,media_body=MediaFileUpload(str(video_path),mimetype=media_type,chunksize=8*1024*1024,resumable=True))
+        response=None
+        while response is None:
+            status,response=request.next_chunk()
+            if progress and status:progress(f"YouTube 업로드 중… {int(status.progress()*100)}%")
+        return response["id"]
     def save_settings(self):
         (DATA/"settings.json").write_text(json.dumps({"provider":self.provider.get(),"openai_api_key":self.api.get(),"anthropic_api_key":self.claude_api.get(),"model":self.model.get()},ensure_ascii=False),encoding="utf-8")
         messagebox.showinfo("저장","설정을 저장했습니다.")

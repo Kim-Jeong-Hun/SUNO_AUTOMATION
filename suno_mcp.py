@@ -129,7 +129,7 @@ def make_auth(storage, callback):
             response_types=["code"],
             token_endpoint_auth_method="none",
             application_type="native",
-            scope="api:v0 generate_music create:generate credits:spend library:read library:write offline_access",
+            scope="api:v0 generate_music create:generate credits:spend library:read library:write download offline_access",
         ),
         storage=storage,
         redirect_handler=callback.open_authorization,

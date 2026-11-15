@@ -3,3 +3,5 @@ google-auth-oauthlib>=1.2.2
 google-auth-httplib2>=0.2.0
 pyinstaller>=6.15.0
 mcp>=2.3.0
+Pillow>=11.3.0
+imageio-ffmpeg>=0.6.0
