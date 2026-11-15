@@ -30,3 +30,40 @@ Google Cloud 프로젝트에서 YouTube Data API v3를 켜고 OAuth 클라이언
 - Suno 생성은 로그인한 Suno 계정의 크레딧을 사용합니다. 앱은 생성 요청 전에 확인 창을 띄웁니다.
 
 Suno 연결은 공식 MCP 서버 `https://api.suno.com/mcp`와 OAuth를 사용합니다. 비공식 Suno API나 브라우저 자동 조작은 사용하지 않습니다. Suno MCP의 베타 도구 구성은 계정이나 서버 업데이트에 따라 달라질 수 있습니다.
+
+---
+
+## English
+
+Suno Studio is a Windows desktop app for drafting Korean lyrics and Suno prompts with OpenAI or Claude, creating a song through Suno's official MCP server, and uploading the result to YouTube.
+
+### Download or build
+
+- Download **SunoStudio.exe** from the [latest GitHub Release](https://github.com/Kim-Jeong-Hun/SUNO_AUTOMATION/releases/latest).
+- To build from source on Windows, run `build.ps1` in PowerShell. The executable is created at `dist\SunoStudio.exe`.
+- The current app interface is in Korean; this section documents setup in English.
+
+### Setup and first run
+
+1. In **Settings / Usage**, choose OpenAI or Claude, enter that provider's API key, and save. The default text models are `gpt-4.1-mini` for OpenAI and `claude-sonnet-5` for Claude; you can enter another model ID supported by your account.
+2. In **Word DB**, add creative words manually or ask the selected AI provider to suggest words.
+3. In **Song Creation**, enter a theme, genre, and mood. Click the lyric/prompt/title button to draft Korean lyrics, a Suno style prompt, and YouTube metadata.
+4. Set up YouTube OAuth as described below. Click **Connect Suno MCP** and sign in to Suno in the browser to grant access. The app stores the OAuth token in `%APPDATA%\SunoStudio\suno_mcp_oauth.json`.
+5. Click **Generate on Suno → Auto-upload to YouTube** and confirm. The app calls an available Suno creation tool, checks MCP results/status/download tools for the audio, creates an MP4 with title-card artwork, and uploads it with the generated title, description, tags, and selected privacy setting. The song is also saved in your Suno library.
+
+If Suno MCP does not return an audio file, or your account lacks download permission or remaining download allowance, the song stays in your Suno library but the automatic upload cannot finish. Suno download access and monthly limits depend on your plan. Song generation and YouTube visibility are confirmed before the workflow starts. YouTube uploads default to **private**.
+
+### YouTube OAuth setup
+
+In Google Cloud, create a project and enable **YouTube Data API v3**. Create an OAuth client ID with application type **Desktop app**, download its JSON file, rename it `client_secrets.json`, and place it next to `SunoStudio.exe`. The first upload opens a Google sign-in and consent page.
+
+### Local data and costs
+
+- SQLite word database and token usage: `%APPDATA%\SunoStudio\studio.db`
+- App settings: `%APPDATA%\SunoStudio\settings.json`
+- Suno MCP OAuth token: `%APPDATA%\SunoStudio\suno_mcp_oauth.json`
+- YouTube OAuth token: `%APPDATA%\SunoStudio\youtube_token.json`
+- API keys and OAuth tokens are stored locally by the app and are not included in this repository. The app does not encrypt these local files; protect your Windows account and do not share the files.
+- AI input/output tokens are recorded per call. Token counts are not the same as billed cost; check your provider's current pricing. Suno song generation and downloads use account credits or plan allowances.
+
+The app connects to Suno's official MCP endpoint at `https://api.suno.com/mcp` using OAuth. It does not use unofficial Suno endpoints or browser automation. The Suno MCP beta tool set may change as Suno updates the service.
