@@ -14,6 +14,7 @@ from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider, TokenS
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
+from secure_store import protect_text, unprotect_text
 
 SERVER = "https://api.suno.com/mcp"
 CALLBACK_HOST = "127.0.0.1"
@@ -29,11 +30,14 @@ class JsonTokenStorage(TokenStorage):
         self._client_info = None
         if path.exists():
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+                stored = path.read_text(encoding="utf-8")
+                data = json.loads(unprotect_text(stored))
                 if data.get("tokens"):
                     self._tokens = OAuthToken.model_validate(data["tokens"])
                 if data.get("client_info"):
                     self._client_info = OAuthClientInformationFull.model_validate(data["client_info"])
+                if stored and not stored.startswith("dpapi:"):
+                    self._save()
             except (ValueError, TypeError):
                 pass
 
@@ -43,7 +47,7 @@ class JsonTokenStorage(TokenStorage):
             "tokens": self._tokens.model_dump(mode="json") if self._tokens else None,
             "client_info": self._client_info.model_dump(mode="json") if self._client_info else None,
         }
-        self.path.write_text(json.dumps(data), encoding="utf-8")
+        self.path.write_text(protect_text(json.dumps(data)), encoding="utf-8")
 
     async def get_tokens(self):
         return self._tokens
